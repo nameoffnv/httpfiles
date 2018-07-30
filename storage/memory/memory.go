@@ -6,23 +6,38 @@ import (
 	"io/ioutil"
 	"sync"
 
+	"hash"
+
 	"github.com/nameoffnv/httpfiles/storage"
-	"github.com/pkg/errors"
 )
 
 type MemoryStorage struct {
-	objects map[string][]byte
-	lock    sync.RWMutex
+	objects  map[string][]byte
+	hashFunc func() hash.Hash
+	lock     sync.RWMutex
 }
 
-func New() storage.Storage {
+func New(h func() hash.Hash) storage.Storage {
 	return &MemoryStorage{
-		objects: make(map[string][]byte),
+		objects:  make(map[string][]byte),
+		hashFunc: h,
 	}
 }
 
 func (s MemoryStorage) Objects() map[string][]byte {
 	return s.objects
+}
+
+func (s *MemoryStorage) NewObjectWriter() (storage.ObjectWriter, error) {
+	return &objectWriter{
+		h: s.hashFunc(),
+		postSave: func(h string, b []byte) {
+			s.lock.Lock()
+			defer s.lock.Unlock()
+
+			s.objects[h] = b
+		},
+	}, nil
 }
 
 func (s *MemoryStorage) Get(id string) (io.ReadCloser, error) {
@@ -34,20 +49,6 @@ func (s *MemoryStorage) Get(id string) (io.ReadCloser, error) {
 		return nil, storage.ErrNotFound
 	}
 	return ioutil.NopCloser(bytes.NewReader(b)), nil
-}
-
-func (s *MemoryStorage) Save(h string, data io.Reader) (int64, error) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	b, err := ioutil.ReadAll(data)
-	if err != nil {
-		return 0, errors.Wrap(err, "read all")
-	}
-
-	s.objects[h] = b
-
-	return int64(len(b)), nil
 }
 
 func (s *MemoryStorage) Delete(id string) error {

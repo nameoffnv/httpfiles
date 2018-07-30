@@ -4,17 +4,15 @@ import (
 	"log"
 	"net/http"
 
+	"crypto/md5"
 	"encoding/json"
 	"flag"
+
 	"github.com/nameoffnv/httpfiles"
 	"github.com/nameoffnv/httpfiles/middleware/limiter"
 	"github.com/nameoffnv/httpfiles/storage"
 	"github.com/nameoffnv/httpfiles/storage/fs"
 	"github.com/nameoffnv/httpfiles/storage/redis_fs"
-)
-
-const (
-	maxFileSizeBytes = 50 * 1024 * 1024
 )
 
 type Options struct {
@@ -41,11 +39,11 @@ func main() {
 		}
 		s = redisStorage
 	} else {
-		s = fs.New(opts.StorePath)
+		s = fs.New(opts.StorePath, md5.New)
 	}
 
 	limit := limiter.New(limiter.Options{MaxRequestPerSecond: 1})
-	filesMux, err := httpfiles.New(s, httpfiles.HashSHA256, maxFileSizeBytes)
+	filesMux, err := httpfiles.New(s)
 	if err != nil {
 		log.Fatal(err)
 	}

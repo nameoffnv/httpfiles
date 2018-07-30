@@ -5,18 +5,26 @@ import (
 	"os"
 	"path"
 
+	"hash"
+
 	"github.com/nameoffnv/httpfiles/storage"
 	"github.com/pkg/errors"
 )
 
 type FileStorage struct {
-	path string
+	path     string
+	hashFunc func() hash.Hash
 }
 
-func New(path string) storage.Storage {
+func New(path string, hashFunc func() hash.Hash) storage.Storage {
 	return &FileStorage{
-		path: path,
+		path:     path,
+		hashFunc: hashFunc,
 	}
+}
+
+func (s *FileStorage) NewObjectWriter() (storage.ObjectWriter, error) {
+	return NewObjectWriter(s.path, s.hashFunc())
 }
 
 func (s *FileStorage) Get(id string) (io.ReadCloser, error) {
@@ -31,24 +39,6 @@ func (s *FileStorage) Get(id string) (io.ReadCloser, error) {
 	}
 
 	return f, nil
-}
-
-func (s *FileStorage) Save(filename string, data io.Reader) (int64, error) {
-	if err := os.MkdirAll(path.Join(s.path, filename[:2]), os.ModePerm); err != nil {
-		return 0, errors.Wrap(err, "mkdir")
-	}
-
-	f, err := os.OpenFile(path.Join(s.path, filename[:2], filename), os.O_CREATE|os.O_WRONLY, os.ModePerm)
-	if err != nil {
-		return 0, errors.Wrap(err, "open file")
-	}
-
-	n, err := io.Copy(f, data)
-	if err != nil {
-		return 0, errors.Wrap(err, "write file")
-	}
-
-	return n, nil
 }
 
 func (s *FileStorage) Delete(id string) error {

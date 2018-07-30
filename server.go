@@ -1,16 +1,20 @@
 package httpfiles
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
+	"fmt"
+	"hash"
+
+	"crypto/md5"
+	"crypto/sha1"
+	"crypto/sha256"
 	"github.com/nameoffnv/httpfiles/storage"
 )
 
@@ -20,23 +24,26 @@ const (
 	ctxStorageKey ctxKey = iota
 )
 
+var Hashes = map[string]func() hash.Hash{
+	"sha1":   sha1.New,
+	"sha256": sha256.New,
+	"md5":    md5.New,
+}
+
 type FilesHandler struct {
 	*http.ServeMux
 
 	storage     storage.Storage
-	hashFn      HashFunc
 	maxFileSize int64
 
 	PreSave  func(storage.Storage, *http.Request) error
 	PostSave func(storage.Storage, *http.Request, string) error
 }
 
-func New(s storage.Storage, hashFn HashFunc, maxFileSize int64) (*FilesHandler, error) {
+func New(s storage.Storage) (*FilesHandler, error) {
 	fh := &FilesHandler{
-		ServeMux:    http.NewServeMux(),
-		storage:     s,
-		hashFn:      hashFn,
-		maxFileSize: maxFileSize,
+		ServeMux: http.NewServeMux(),
+		storage:  s,
 	}
 
 	fh.Handle("/", fh.WithContext(http.HandlerFunc(fh.handle)))
@@ -109,39 +116,52 @@ func (s *FilesHandler) handlePOST(rw http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	limitReader := io.LimitReader(req.Body, s.maxFileSize)
-	bodyBytes, err := ioutil.ReadAll(limitReader)
+	objectWriter, err := s.storage.NewObjectWriter()
 	if err != nil {
 		http.Error(rw, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	writers := []io.Writer{
+		objectWriter,
 	}
 
 	// check url params for hashes
-	checkHashes := make(map[string]string)
-	for k, v := range req.URL.Query() {
-		for _, vv := range v {
-			if _, ok := HashFuncs[k]; ok {
-				checkHashes[k] = vv
-			}
+	checkHashes := make(map[string]hash.Hash)
+	for k := range req.URL.Query() {
+		if hNew, ok := Hashes[k]; ok {
+			h := hNew()
+			checkHashes[k] = h
+			writers = append(writers, h)
 		}
 	}
 
-	if err := ValidateHashes(bodyBytes, checkHashes); err != nil {
-		http.Error(rw, err.Error(), http.StatusBadRequest)
+	mw := io.MultiWriter(writers...)
+
+	if _, err := io.Copy(mw, req.Body); err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	h, err := s.hashFn(bytes.NewReader(bodyBytes))
+	for k, v := range checkHashes {
+		hashProvided := req.URL.Query().Get(k)
+		hashCalculated := fmt.Sprintf("%x", v.Sum(nil))
+		if hashProvided != hashCalculated {
+			objectWriter.Remove()
+			http.Error(
+				rw,
+				fmt.Sprintf("hash mismatch %s, %s != %s", k, hashProvided, hashCalculated),
+				http.StatusBadRequest,
+			)
+			return
+		}
+	}
+
+	h, err := objectWriter.Save()
 	if err != nil {
 		http.Error(rw, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	if _, err := s.storage.Save(h, bytes.NewReader(bodyBytes)); err != nil {
-		http.Error(rw, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	req.Body.Close()
 
 	if s.PostSave != nil {
 		if err := s.PostSave(s.storage, req, h); err != nil {

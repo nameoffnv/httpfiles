@@ -1,13 +1,15 @@
 package redis_fs
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"io"
+	"time"
+
 	"github.com/go-redis/redis"
 	"github.com/nameoffnv/httpfiles/storage"
 	"github.com/nameoffnv/httpfiles/storage/fs"
 	"github.com/pkg/errors"
-	"io"
-	"time"
 )
 
 const (
@@ -21,7 +23,7 @@ type RedisFileStorage struct {
 }
 
 func New(redisHost, redisPassword string, redisDB int, path string) (storage.Storage, error) {
-	fileStorage := fs.New(path)
+	fileStorage := fs.New(path, sha256.New)
 
 	client := redis.NewClient(&redis.Options{
 		Addr:     redisHost,
@@ -34,6 +36,17 @@ func New(redisHost, redisPassword string, redisDB int, path string) (storage.Sto
 	}
 
 	return &RedisFileStorage{fileStorage.(*fs.FileStorage), client}, nil
+}
+
+func (s *RedisFileStorage) NewObjectWriter() (storage.ObjectWriter, error) {
+	writer, err := s.fs.NewObjectWriter()
+	if err != nil {
+		return nil, err
+	}
+	return &objectWriter{
+		ObjectWriter: writer,
+		postSave:     s.saveMeta,
+	}, nil
 }
 
 func (s *RedisFileStorage) Get(id string) (io.ReadCloser, error) {
@@ -55,34 +68,29 @@ func (s *RedisFileStorage) Get(id string) (io.ReadCloser, error) {
 	return reader, nil
 }
 
-func (s *RedisFileStorage) Save(id string, data io.Reader) (int64, error) {
-	n, err := s.fs.Save(id, data)
-	if err != nil {
-		return 0, errors.Wrap(err, "save file")
-	}
-
-	if _, err := s.client.HSet(keyLoadedFiles, id, true).Result(); err != nil {
-		return 0, errors.Wrap(err, "redis HSet")
+func (s *RedisFileStorage) saveMeta(h string, n int64) error {
+	if _, err := s.client.HSet(keyLoadedFiles, h, true).Result(); err != nil {
+		return errors.Wrap(err, "redis HSet")
 	}
 
 	metaInfo := FileMetaInfo{
-		Filename:      id,
+		Filename:      h,
 		Size:          n,
 		UploadDate:    time.Now(),
 		DownloadCount: 0,
 	}
 
-	args := []interface{}{"hmset", metaKey(id)}
+	args := []interface{}{"hmset", metaKey(h)}
 	args = append(args, metaInfo.redisArgs()...)
 	cmd := redis.NewStatusCmd(args...)
 
 	s.client.Process(cmd)
 
 	if _, err := cmd.Result(); err != nil {
-		return 0, errors.Wrap(err, "redis HMSet")
+		return errors.Wrap(err, "redis HMSet")
 	}
 
-	return n, nil
+	return nil
 }
 
 func (s *RedisFileStorage) Delete(id string) error {

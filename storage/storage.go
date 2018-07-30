@@ -10,7 +10,14 @@ var (
 )
 
 type Storage interface {
+	NewObjectWriter() (ObjectWriter, error)
 	Get(string) (io.ReadCloser, error)
-	Save(string, io.Reader) (int64, error)
 	Delete(string) error
+}
+
+type ObjectWriter interface {
+	io.Writer
+	Size() int64
+	Save() (string, error)
+	Remove() error
 }

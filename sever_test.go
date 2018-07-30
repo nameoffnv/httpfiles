@@ -9,19 +9,16 @@ import (
 	"strings"
 	"testing"
 
+	"crypto/sha256"
+
 	"github.com/nameoffnv/httpfiles"
 	"github.com/nameoffnv/httpfiles/storage/memory"
 )
 
 func TestFilesHandler(t *testing.T) {
-	s := memory.New()
+	s := memory.New(sha256.New)
 
-	opts := httpfiles.Options{
-		MaxConnectionPerIP:  1,
-		MaxRequestPerSecond: 100,
-		MaxBytesPerIP:       10 * 1024 * 1024,
-	}
-	httpFilesHandler, err := httpfiles.New(s, httpfiles.HashSHA256, opts)
+	handler, err := httpfiles.New(s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +29,7 @@ func TestFilesHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPatch, "/", bytes.NewReader(testObj))
 		rr := httptest.NewRecorder()
 
-		httpFilesHandler.ServeHTTP(rr, req)
+		handler.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusMethodNotAllowed {
 			t.Fatalf("bad response status code, excepted %d, actual %d", http.StatusMethodNotAllowed, rr.Code)
@@ -43,7 +40,7 @@ func TestFilesHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(testObj))
 		rr := httptest.NewRecorder()
 
-		httpFilesHandler.ServeHTTP(rr, req)
+		handler.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("bad response status code, excepted %d, acutal %d", http.StatusCreated, rr.Code)
@@ -73,7 +70,7 @@ func TestFilesHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/?md5=aaa", bytes.NewReader(testObj))
 		rr := httptest.NewRecorder()
 
-		httpFilesHandler.ServeHTTP(rr, req)
+		handler.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusBadRequest {
 			t.Fatalf("bad response status code, excepted %d, acutal %d", http.StatusBadRequest, rr.Code)
@@ -88,7 +85,7 @@ func TestFilesHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/?sha256=b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9", bytes.NewReader(testObj))
 		rr := httptest.NewRecorder()
 
-		httpFilesHandler.ServeHTTP(rr, req)
+		handler.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("bad response status code, excepted %d, acutal %d", http.StatusCreated, rr.Code)
@@ -111,7 +108,7 @@ func TestFilesHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, fmt.Sprint("/", hashKey), nil)
 		rr := httptest.NewRecorder()
 
-		httpFilesHandler.ServeHTTP(rr, req)
+		handler.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusOK {
 			t.Fatalf("bad response status code, excepted %d, actual %d", http.StatusOK, rr.Code)
@@ -126,7 +123,7 @@ func TestFilesHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/notfoundkey", nil)
 		rr := httptest.NewRecorder()
 
-		httpFilesHandler.ServeHTTP(rr, req)
+		handler.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusNotFound {
 			t.Fatalf("bad response status code, excepted %d, actual %d", http.StatusNotFound, rr.Code)
@@ -137,7 +134,7 @@ func TestFilesHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/some/bad/url", nil)
 		rr := httptest.NewRecorder()
 
-		httpFilesHandler.ServeHTTP(rr, req)
+		handler.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusBadRequest {
 			t.Fatalf("bad response status code, excepted %d, actual %d", http.StatusBadRequest, rr.Code)
@@ -160,7 +157,7 @@ func TestFilesHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodDelete, fmt.Sprint("/", hashKey), nil)
 		rr := httptest.NewRecorder()
 
-		httpFilesHandler.ServeHTTP(rr, req)
+		handler.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusNoContent {
 			t.Fatalf("bad response status code, excepted %d, actual %d", http.StatusNoContent, rr.Code)
@@ -175,7 +172,7 @@ func TestFilesHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodDelete, "/badkey", nil)
 		rr := httptest.NewRecorder()
 
-		httpFilesHandler.ServeHTTP(rr, req)
+		handler.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusNotFound {
 			t.Fatalf("bad response status code, excepted %d, actual %d", http.StatusNotFound, rr.Code)
