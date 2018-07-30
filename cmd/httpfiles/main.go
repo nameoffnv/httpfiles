@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"github.com/nameoffnv/httpfiles"
+	"github.com/nameoffnv/httpfiles/middleware/limiter"
 	"github.com/nameoffnv/httpfiles/storage"
 	"github.com/nameoffnv/httpfiles/storage/fs"
 	"github.com/nameoffnv/httpfiles/storage/redis_fs"
@@ -43,8 +44,8 @@ func main() {
 		s = fs.New(opts.StorePath)
 	}
 
-	serverOpts := httpfiles.Options{MaxFileSizeBytes: maxFileSizeBytes, MaxRequestPerSecond: 1}
-	filesMux, err := httpfiles.New(s, httpfiles.HashSHA256, serverOpts)
+	limit := limiter.New(limiter.Options{MaxRequestPerSecond: 1})
+	filesMux, err := httpfiles.New(s, httpfiles.HashSHA256, maxFileSizeBytes)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -78,7 +79,7 @@ func main() {
 	})))
 
 	log.Printf("start listening :5000")
-	if err := http.ListenAndServe(":5000", filesMux); err != nil {
+	if err := http.ListenAndServe(":5000", limit.LimitMiddleware(filesMux)); err != nil {
 		log.Fatal(err)
 	}
 }

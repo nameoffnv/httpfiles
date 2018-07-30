@@ -23,34 +23,20 @@ const (
 type FilesHandler struct {
 	*http.ServeMux
 
-	storage storage.Storage
-	hashFn  HashFunc
-	options Options
-	limiter *limiter
+	storage     storage.Storage
+	hashFn      HashFunc
+	maxFileSize int64
 
 	PreSave  func(storage.Storage, *http.Request) error
 	PostSave func(storage.Storage, *http.Request, string) error
 }
 
-type counterResponseWriter struct {
-	http.ResponseWriter
-	bytesTransferred int64
-}
-
-func (c *counterResponseWriter) Write(b []byte) (int, error) {
-	c.bytesTransferred += int64(len(b))
-	return c.ResponseWriter.Write(b)
-}
-
-func New(s storage.Storage, hashFn HashFunc, opts Options) (*FilesHandler, error) {
-	opts.Setup()
-
+func New(s storage.Storage, hashFn HashFunc, maxFileSize int64) (*FilesHandler, error) {
 	fh := &FilesHandler{
-		ServeMux: http.NewServeMux(),
-		storage:  s,
-		hashFn:   hashFn,
-		options:  opts,
-		limiter:  newLimiter(opts),
+		ServeMux:    http.NewServeMux(),
+		storage:     s,
+		hashFn:      hashFn,
+		maxFileSize: maxFileSize,
 	}
 
 	fh.Handle("/", fh.WithContext(http.HandlerFunc(fh.handle)))
@@ -59,17 +45,7 @@ func New(s storage.Storage, hashFn HashFunc, opts Options) (*FilesHandler, error
 }
 
 func (s *FilesHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	crw := &counterResponseWriter{ResponseWriter: rw}
-	remoteAddr := strings.Split(req.RemoteAddr, ":")[0]
-
-	if s.limiter.Acquire(remoteAddr) {
-		s.ServeMux.ServeHTTP(crw, req)
-		s.limiter.Release(remoteAddr)
-		s.limiter.Transferred(remoteAddr, crw.bytesTransferred)
-	} else {
-		log.Printf("remote: %s - too many requests", remoteAddr)
-		http.Error(rw, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
-	}
+	s.ServeMux.ServeHTTP(rw, req)
 }
 
 func (s *FilesHandler) GetStorage(req *http.Request) storage.Storage {
@@ -86,8 +62,7 @@ func (s *FilesHandler) WithContext(next http.Handler) http.Handler {
 		ctx := context.WithValue(req.Context(), ctxStorageKey, s.storage)
 		next.ServeHTTP(rw, req.WithContext(ctx))
 		stop := time.Now().Sub(start)
-		crw := rw.(*counterResponseWriter)
-		log.Printf("%s - %s - %d bytes - %d nsec", req.Method, req.URL.RequestURI(), crw.bytesTransferred, stop.Nanoseconds())
+		log.Printf("%s - %s - %d nsec", req.Method, req.URL.RequestURI(), stop.Nanoseconds())
 	})
 }
 
@@ -134,7 +109,7 @@ func (s *FilesHandler) handlePOST(rw http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	limitReader := io.LimitReader(req.Body, s.options.MaxFileSizeBytes)
+	limitReader := io.LimitReader(req.Body, s.maxFileSize)
 	bodyBytes, err := ioutil.ReadAll(limitReader)
 	if err != nil {
 		http.Error(rw, err.Error(), http.StatusInternalServerError)
